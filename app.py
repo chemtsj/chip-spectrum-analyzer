@@ -70,13 +70,16 @@ st.markdown(
 st.caption("Raman mapping 데이터를 칩 내 통계와 조건별 칩 간 통계로 정리합니다.")
 
 PAGES = ("칩 내 데이터 처리", "칩 간 데이터 처리")
-if st.session_state.get("chip_app_page") not in PAGES:
-    st.session_state["chip_app_page"] = PAGES[0]
+# Keep navigation separate from the old radio widget's key. Streamlit may
+# remove the old widget-owned key when that radio is no longer rendered.
+PAGE_STATE_KEY = "rslab_active_page_v21"
+selected_page = st.session_state.get(PAGE_STATE_KEY, st.session_state.get("chip_app_page"))
+st.session_state[PAGE_STATE_KEY] = selected_page if selected_page in PAGES else PAGES[0]
 
 
 def select_chip_page(page):
     """Navigation callbacks update the page before Streamlit reruns the script."""
-    st.session_state["chip_app_page"] = page
+    st.session_state[PAGE_STATE_KEY] = page
 
 
 with st.sidebar:
@@ -86,13 +89,13 @@ with st.sidebar:
         st.button(
             page_label,
             key=f"chip_app_navigation_{page_index}",
-            type="primary" if st.session_state["chip_app_page"] == page_label else "secondary",
+            type="primary" if st.session_state[PAGE_STATE_KEY] == page_label else "secondary",
             use_container_width=True,
             on_click=select_chip_page,
             args=(page_label,),
         )
     st.divider()
-    st.caption("RSLAB Chip Spectrum Analyzer · v2.0")
+    st.caption("RSLAB Chip Spectrum Analyzer · v2.0.1")
 
-page = st.session_state["chip_app_page"]
+page = st.session_state[PAGE_STATE_KEY]
 render_chip_tools(between=page == "칩 간 데이터 처리")
