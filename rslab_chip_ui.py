@@ -16,7 +16,11 @@ import streamlit as st
 
 from rslab_chip_analysis import (
     ProcessOptions, parse_mapping_bytes, process_chip, summary_frame,
-    peak_record, group_peak_summary, group_spectrum_frame,
+    peak_record, group_peak_summary, group_spectrum_frame, overview_frame, overview_group_summary,
+)
+
+from rslab_chip_plots import (
+    graph_editor, draw_spectra, draw_group_peaks, draw_chip_overview, figure_bytes,
 )
 
 
@@ -74,33 +78,51 @@ def _chip_settings(prefix):
                                        p=float(p), iterations=int(iterations), independent=independent)
 
 
-def _chip_plot_spectra(chips, mode, lo, hi, show_sd=False, independent=False):
-    fig, ax = plt.subplots(figsize=(10, 4.2), layout="constrained")
-    for chip in chips:
-        table = summary_frame(chip, independent=independent)
-        x, y = table.iloc[:, 0].to_numpy(), table[mode].to_numpy()
-        line, = ax.plot(x, y, label=chip.name, linewidth=1)
-        error_column = "SD_within_chip" if mode == "MEAN" else "SUM_SD_independent_estimate"
-        sd = table[error_column].to_numpy()
-        if show_sd and np.isfinite(sd).any():
-            ax.fill_between(x, y-sd, y+sd, color=line.get_color(), alpha=.18,
-                            label="±SD (within chip)" if mode == "MEAN" else "±SD (independent estimate)")
-        mask = (x >= lo) & (x <= hi)
-        if np.any(mask):
-            candidates = np.flatnonzero(mask)
-            i = candidates[np.argmax(y[mask])]
-            ax.scatter([x[i]], [y[i]], color=line.get_color(), s=28, zorder=3)
-    ax.axvspan(lo, hi, color="gray", alpha=.10, label="Peak window")
-    ax.set(xlabel="Raman shift (cm$^{-1}$)", ylabel=f"{mode} intensity (a.u.)")
-    ax.legend(fontsize=8, loc="best")
+def _chip_figure_download(fig, stem, prefix, settings):
     st.pyplot(fig)
-    image = io.BytesIO()
-    fig.savefig(image, format="png", dpi=180)
+    png = figure_bytes(fig, "png", dpi=settings.get("dpi", 180))
+    choice = st.selectbox("그래프 저장 형식", ["PNG", "PDF", "SVG"], key=f"{prefix}_format")
+    extension = choice.lower()
+    data = png if extension == "png" else figure_bytes(fig, extension, dpi=settings.get("dpi", 180))
+    mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}[extension]
+    st.download_button(f"{choice} 저장", data, f"{stem}.{extension}", mime, key=f"{prefix}_download")
     plt.close(fig)
-    return image.getvalue()
+    return png
 
 
-def _chip_zip(tables, manifest, spectrum_png=None):
+def _chip_uploads(prefix, between):
+    """Return (files, assigned condition names, stable upload slot identifiers)."""
+    if not between:
+        uploaded = st.file_uploader("한 칩의 mapping 파일 업로드", type=["txt", "csv", "tsv"],
+                                    key=f"{prefix}_upload")
+        return ([uploaded], ["단일 칩"], ["single"]) if uploaded else ([], [], [])
+    st.subheader("조건별 파일 업로드")
+    st.caption("같은 조건의 well 파일들을 한 업로드 창에 넣으세요. 조건명은 각 창에서 바꿀 수 있습니다.")
+    st.caption("여러 업로드 창에 같은 조건명을 입력하면 하나의 조건으로 묶습니다.")
+    count = int(st.number_input("조건 수", min_value=1, max_value=24, value=3, step=1,
+                                key=f"{prefix}_condition_count"))
+    files, groups, slots = [], [], []
+    for row_start in range(0, count, 2):
+        columns = st.columns(2)
+        for offset, col in enumerate(columns):
+            i = row_start + offset
+            if i >= count:
+                continue
+            with col:
+                with st.container(border=True):
+                    label = st.text_input(f"조건 {i+1} 이름", value=f"조건 {i+1}",
+                                          key=f"{prefix}_condition_label_{i}").strip()
+                    selected = st.file_uploader(f"조건 {i+1}의 well 파일들", type=["txt", "csv", "tsv"],
+                                                accept_multiple_files=True, key=f"{prefix}_condition_upload_{i}")
+                    st.caption(f"{len(selected or [])}개 well")
+                    for j, uploaded in enumerate(selected or []):
+                        files.append(uploaded)
+                        groups.append(label)
+                        slots.append(f"condition_{i+1:02d}_file_{j+1:03d}")
+    return files, groups, slots
+
+
+def _chip_zip(tables, manifest, spectrum_png=None, graphs=None):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for filename, table in tables.items():
@@ -109,6 +131,8 @@ def _chip_zip(tables, manifest, spectrum_png=None):
         archive.writestr("column_definitions.txt", _CHIP_COLUMN_HELP)
         if spectrum_png:
             archive.writestr("spectra.png", spectrum_png)
+        for filename, data in (graphs or {}).items():
+            archive.writestr(f"graphs/{filename}", data)
     return buffer.getvalue()
 
 
@@ -125,6 +149,15 @@ peak_at_boundary: selected peak is at the first or last sampled point inside the
 N_chips: number of chips contributing to a group, not total mapping point count.
 peak_mean / peak_sd / peak_sum: mean / sample SD / sum of separate chip peak intensities.
 MEAN_between_chips / SD_between_chips / SUM_between_chips: per-shift statistics of separate representative chip spectra with equal chip weights.
+Overview method=chip_peak: one bar per chip, evaluated at that chip's representative-spectrum maximum. Different chips can use different shifts.
+Overview method=fixed_x: one bar per chip at the sampled shift nearest requested_x. No interpolation; actual shift and x_offset are recorded.
+value: MEAN or SUM at that selected shift. For MEAN it matches the chip peak only in chip_peak mode.
+error: within-chip spatial sample SD at the selected shift for MEAN; optional independent SUM SD estimate for SUM. It is not the SD of separate mapping-point maxima.
+error_basis: within_chip_spatial_SD / independent_sum_SD_estimate / not_estimated.
+requested_x: explicit reference shift for fixed_x, empty for chip_peak.
+x_offset: actual selected Raman shift minus requested_x, empty for chip_peak.
+value_mean / value_sd / value_sum: equal-chip condition statistics of the exact overview bar heights. Fixed-x results are separate from maximum-peak statistics.
+Display stacking, colors, curve/legend order, labels and axis limits never alter analytical CSV values.
 All SDs require at least two observations. Undefined values are exported empty.
 Peak of an averaged spectrum is not the mean of individual chip peaks.
 No smoothing, normalization, spectral interpolation, or automatic outlier removal.
@@ -133,7 +166,7 @@ No smoothing, normalization, spectral interpolation, or automatic outlier remova
 
 def _chip_manifest(options, mode, lo, hi, sources):
     from dataclasses import asdict
-    return {"module_version": "1.0", "statistic": mode, "peak_window_cm-1": [lo, hi],
+    return {"module_version": "2.0", "statistic": mode, "peak_window_cm-1": [lo, hi],
             "options": asdict(options), "sd_ddof": 1,
             "processing_order": "parse -> baseline each mapping point -> within-chip mean/sum -> each-chip maximum -> group statistics",
             "peak_tie_rule": "lowest sampled Raman shift", "grid_policy": "strict; no interpolation",
@@ -141,29 +174,31 @@ def _chip_manifest(options, mode, lo, hi, sources):
 
 
 def render_chip_tools(between=False):
-    """Render either requested screen without accessing the legacy curve state."""
+    """Render one analysis page. Plot settings never modify analytical arrays."""
     prefix = "chip_between" if between else "chip_within"
     st.header("칩 간 데이터 처리" if between else "칩 내 데이터 처리")
     st.write("파일 1개를 칩 1개로 처리합니다. HORIBA mapping TXT와 전치된 mapping CSV를 읽을 수 있습니다.")
-    uploaded = st.file_uploader("칩별 mapping 파일 업로드" if between else "한 칩의 mapping 파일 업로드",
-                                type=["txt", "csv", "tsv"], accept_multiple_files=between,
-                                key=f"{prefix}_upload")
+    files, assigned_groups, slots = _chip_uploads(prefix, between)
     mode, lo, hi, options = _chip_settings(prefix)
     if lo >= hi or not np.isfinite([lo, hi]).all():
         st.error("피크 검색 시작값은 끝값보다 작아야 하며 두 값 모두 유한해야 합니다.")
         return
-    if not uploaded:
+    if not files:
         st.info("mapping 파일을 올리면 측정점 수를 자동으로 확인하고 결과를 계산합니다.")
         return
-    files = list(uploaded) if between else [uploaded]
-    signature = hashlib.sha256(b"".join(f.name.encode()+hashlib.sha256(f.getvalue()).digest() for f in files)).hexdigest()[:16]
+    if any(not str(label).strip() for label in assigned_groups):
+        st.error("파일을 올린 조건의 이름을 모두 입력하세요.")
+        return
+    signature = hashlib.sha256(b"".join(slot.encode()+f.name.encode()+hashlib.sha256(f.getvalue()).digest()
+                                       for slot, f in zip(slots, files))).hexdigest()[:16]
     chips, sources, errors = [], [], []
     with st.spinner("칩별 mapping 데이터를 계산하는 중입니다."):
         for index, source in enumerate(files):
             try:
                 chip = _chip_cached_process(source.getvalue(), source.name, options)
                 chips.append(chip)
-                sources.append({"file_id": f"{index+1:03d}", "source_file": source.name,
+                sources.append({"file_id": slots[index], "source_file": source.name,
+                                "upload_group": assigned_groups[index],
                                 "sha256": hashlib.sha256(source.getvalue()).hexdigest(),
                                 "N_points": int(chip.y.shape[1]), "N_shifts": int(len(chip.x)),
                                 "detected_format": chip.format})
@@ -175,14 +210,16 @@ def render_chip_tools(between=False):
         st.info("모든 파일을 읽을 수 있도록 수정한 후 다시 업로드하세요. 누락된 칩이 있는 상태로 그룹 통계를 계산하지 않습니다.")
         return
     if between:
-        st.subheader("칩 이름과 조건 지정")
-        st.caption("같은 농도끼리 조건 이름을 똑같이 입력하세요. 예: A1·A2·A3는 1 mM, B1·B2·B3는 3 mM. 파일명만으로 농도를 확정하지 않습니다.")
-        default_table = pd.DataFrame([{"file_id": s["file_id"], "source_file": s["source_file"],
-                                      "chip_name": _chip_default_name(s["source_file"]),
-                                      "group_label": "조건 1", "N_points": s["N_points"]} for s in sources])
-        edited = st.data_editor(default_table, hide_index=True, use_container_width=True,
-                                disabled=["file_id", "source_file", "N_points"],
-                                key=f"{prefix}_groups_{signature}")
+        st.subheader("칩 이름과 조건 확인")
+        st.caption("조건은 업로드 창에 따라 배정됩니다. 조건명은 위쪽 각 업로드 창에서, 칩 이름은 아래 표에서 변경하세요.")
+        defaults = pd.DataFrame([{"file_id": s["file_id"], "source_file": s["source_file"],
+                                  "chip_name": _chip_default_name(s["source_file"]),
+                                  "group_label": s["upload_group"], "N_points": s["N_points"]} for s in sources])
+        edited = st.data_editor(defaults, hide_index=True, use_container_width=True,
+                                disabled=["file_id", "source_file", "group_label", "N_points"],
+                                key=f"{prefix}_groups_{signature}").copy()
+        # Condition names belong to their upload slots, not the editor's stale state.
+        edited["group_label"] = assigned_groups
         if edited[["chip_name", "group_label"]].isna().any().any():
             st.error("칩 이름과 조건 이름을 모두 입력하세요.")
             return
@@ -201,14 +238,13 @@ def render_chip_tools(between=False):
     for i, source in enumerate(sources):
         source.update(chip_name=named_chips[i].name, group_label=str(edited.iloc[i].group_label))
     if between:
-        data_hashes = [hashlib.sha256(c.x.tobytes()+c.y.tobytes()).hexdigest() for c in chips]
-        if len(set(data_hashes)) < len(data_hashes):
+        hashes = [hashlib.sha256(c.x.tobytes()+c.y.tobytes()).hexdigest() for c in chips]
+        if len(set(hashes)) < len(hashes):
             st.warning("내용이 완전히 같은 mapping 데이터가 있습니다. 같은 파일을 반복 칩으로 올리지 않았는지 확인하세요.")
             if not st.checkbox("동일한 데이터가 서로 다른 칩에서 측정된 것이므로 포함", key=f"{prefix}_duplicates_{signature}"):
                 return
-        counts = [c.y.shape[1] for c in chips]
-        if mode == "SUM" and len(set(counts)) > 1:
-            st.warning("칩별 측정점 수가 다릅니다. SUM은 측정점 수에 비례하므로 칩 간 비교에 측정점 수의 영향이 포함됩니다.")
+        if mode == "SUM" and len({c.y.shape[1] for c in chips}) > 1:
+            st.warning("칩별 측정점 수가 다릅니다. SUM은 측정점 수의 영향을 받습니다.")
     try:
         peaks = pd.DataFrame([dict(peak_record(c, mode, lo, hi),
                                    group_label=sources[i]["group_label"], source_file=sources[i]["source_file"])
@@ -221,13 +257,20 @@ def render_chip_tools(between=False):
         st.warning(f"{boundary_names}: 최대값이 검색 구간의 첫 또는 마지막 측정점입니다. 피크 전체가 구간에 들어오는지 확인하세요.")
     if (peaks.tie_count > 1).any():
         st.caption("같은 최대값이 여러 곳에 있으면 가장 낮은 파수를 보고합니다. tie_count에 개수를 기록합니다.")
+
     st.subheader("대표 스펙트럼")
-    show_sd = False
-    if not between:
-        show_sd = st.checkbox("편차 범위 표시", value=(mode == "MEAN"), key=f"{prefix}_show_sd_{mode}",
-                               disabled=mode == "SUM" and not options.independent)
-    png = _chip_plot_spectra(named_chips, mode, lo, hi, show_sd=show_sd, independent=options.independent)
-    st.download_button("스펙트럼 PNG 저장", png, "chip_spectra.png", "image/png", key=f"{prefix}_png")
+    st.caption("그래프 설정의 곡선 순서와 범례 순서를 각각 바꿀 수 있습니다. 수직 스택은 화면과 그래프 파일에만 적용됩니다.")
+    show_sd = st.checkbox("칩 내 편차 범위 표시", value=(not between and mode == "MEAN"),
+                           key=f"{prefix}_show_sd_{mode}", disabled=mode == "SUM" and not options.independent)
+    plot_settings, graphs = {}, {}
+    try:
+        settings = graph_editor([c.name for c in named_chips], f"{prefix}_spectra", spectrum=True)
+        plot_settings["spectra"] = settings
+        fig = draw_spectra(named_chips, mode, lo, hi, settings, show_sd=show_sd, independent=options.independent)
+        png = _chip_figure_download(fig, "chip_spectra", f"{prefix}_spectra", settings)
+    except ValueError as exc:
+        st.error(f"스펙트럼 그래프 설정: {exc}")
+        return
     st.subheader("칩별 구간 최대값")
     st.dataframe(peaks, use_container_width=True, hide_index=True)
     st.download_button("칩별 최대값 CSV 저장", _chip_csv(peaks), "chip_peak_values.csv", "text/csv", key=f"{prefix}_peaks")
@@ -248,34 +291,81 @@ def render_chip_tools(between=False):
             st.caption(f"{chip.y.shape[1]}개 측정점, {len(chip.x)}개 파수. MEAN 옆 SD는 위치 간 표준편차입니다.")
             st.dataframe(summary, use_container_width=True, hide_index=True)
             st.download_button("평균·SD·합 CSV 저장", _chip_csv(summary), f"{stem}_statistics.csv", "text/csv", key=f"{prefix}_stats")
+
     skipped_spectrum_groups = []
+    overview_config = None
     if between:
         grouped = group_peak_summary(peaks, independent=options.independent)
-        grouped["window_min"] = lo
-        grouped["window_max"] = hi
+        group_names = list(edited.group_label.drop_duplicates())
         st.subheader("조건별 칩 간 통계")
-        st.caption("각 칩에서 최대값을 먼저 찾은 다음, 같은 조건의 최대값들로 평균과 SD를 계산합니다. 칩 1개는 SD가 빈칸입니다.")
+        st.caption("색깔 점은 각 well, 검은 점과 오차막대는 조건별 well 평균±칩 간 SD입니다. 같은 조건의 점은 같은 세로줄에 놓입니다.")
         st.dataframe(grouped, use_container_width=True, hide_index=True)
         st.download_button("조건별 통계 CSV 저장", _chip_csv(grouped), "group_peak_statistics.csv", "text/csv", key=f"{prefix}_group_stats")
         tables["group_peak_statistics.csv"] = grouped
-        fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
-        positions = np.arange(len(grouped))
-        for pos, (_, row) in zip(positions, grouped.iterrows()):
-            vals = peaks.loc[peaks.group_label == row.group_label, "peak_intensity"].to_numpy()
-            ax.scatter(pos + np.linspace(-.06, .06, len(vals)), vals, s=25, alpha=.65)
-            err = row.peak_sd if np.isfinite(row.peak_sd) else None
-            ax.errorbar(pos, row.peak_mean, yerr=err, fmt="ko", capsize=5, markersize=5)
-        ax.set_xticks(positions, grouped.group_label.astype(str), rotation=20, ha="right")
-        ax.set(xlabel="Condition", ylabel=f"Peak intensity of {mode} spectrum (a.u.)")
-        st.pyplot(fig)
-        plt.close(fig)
+        try:
+            settings = graph_editor(group_names, f"{prefix}_groups", spectrum=False)
+            plot_settings["group_peaks"] = settings
+            fig = draw_group_peaks(peaks, grouped, settings)
+            graphs["group_peak_statistics.png"] = _chip_figure_download(fig, "group_peak_statistics", f"{prefix}_groups", settings)
+        except ValueError as exc:
+            st.error(f"조건별 그래프 설정: {exc}")
+            return
+
+        st.subheader("칩 내·칩 간 편차 한눈에 보기")
+        basis_label = st.radio("well 막대 높이의 기준", ["각 칩의 구간 최대값", "동일 파수에서 비교"],
+                               horizontal=True, key=f"{prefix}_overview_basis")
+        method = "chip_peak" if basis_label == "각 칩의 구간 최대값" else "fixed_x"
+        reference = None
+        if method == "fixed_x":
+            reference = st.number_input("비교할 Raman shift (cm⁻¹)", value=float(np.median(peaks.peak_x)),
+                                         format="%.6g", key=f"{prefix}_overview_x_{signature}")
+        show_group = st.checkbox("조건별 well 평균과 칩 간 SD 범위 표시", value=True, key=f"{prefix}_overview_group_sd")
+        if mode == "MEAN":
+            st.caption("막대 1개는 well 1개의 평균 intensity이며, 오차막대는 그 파수에서 mapping 위치 간 SD입니다. 같은 색은 같은 조건입니다.")
+        elif options.independent:
+            st.caption("막대는 well의 SUM이며, 오차막대는 독립·동일분포 가정의 SUM SD 추정값입니다.")
+        else:
+            st.caption("막대는 well의 SUM입니다. SUM의 칩 내 SD 추정은 독립성 가정을 켰을 때만 표시합니다.")
+        st.caption("조건별 가로선은 막대 높이들의 평균, 음영은 그 well 값들 사이의 칩 간 ±SD입니다.")
+        if method == "chip_peak":
+            st.caption("각 well은 자기 대표 스펙트럼의 최대값 위치에서 비교합니다. 실제 비교 파수는 well마다 다를 수 있습니다.")
+        else:
+            st.caption("입력 파수에 가장 가까운 실제 측정점을 사용합니다. 요청 파수·실제 파수·차이를 표에 기록합니다.")
+        try:
+            overview = overview_frame(named_chips, edited.group_label.tolist(), mode=mode, lo=lo, hi=hi,
+                                      method=method, reference_x=reference, independent=options.independent)
+            overview_groups = overview_group_summary(overview, independent=options.independent)
+            settings = graph_editor(group_names, f"{prefix}_overview", spectrum=False)
+            with st.expander("well 표시 순서", expanded=False):
+                order_table = pd.DataFrame({"chip_name": [c.name for c in named_chips],
+                                            "display_order": range(1, len(named_chips)+1)})
+                order_table = st.data_editor(order_table, disabled=["chip_name"], hide_index=True,
+                                             use_container_width=True, key=f"{prefix}_well_order_{signature}")
+                ranks = pd.to_numeric(order_table["display_order"], errors="coerce")
+                if not np.isfinite(ranks).all():
+                    raise ValueError("well 표시 순서에는 유한한 숫자를 입력하세요.")
+                settings["well_order"] = order_table.assign(_rank=ranks).sort_values("_rank", kind="stable")["chip_name"].tolist()
+                st.caption("작은 번호부터 표시하며 같은 조건의 well은 함께 배치됩니다.")
+            plot_settings["overview"] = settings
+            fig = draw_chip_overview(overview, mode=mode, settings=settings, show_group_mean=show_group)
+            graphs["chip_overview.png"] = _chip_figure_download(fig, "chip_overview", f"{prefix}_overview", settings)
+            tables["chip_overview_values.csv"] = overview
+            tables["chip_overview_group_statistics.csv"] = overview_groups
+            st.dataframe(overview, use_container_width=True, hide_index=True)
+            st.download_button("well별 막대·오차값 CSV 저장", _chip_csv(overview), "chip_overview_values.csv", "text/csv", key=f"{prefix}_overview_values")
+            st.dataframe(overview_groups, use_container_width=True, hide_index=True)
+            st.download_button("막대 기준 조건별 통계 CSV 저장", _chip_csv(overview_groups), "chip_overview_group_statistics.csv", "text/csv", key=f"{prefix}_overview_group_values")
+            overview_config = {"method": method, "reference_x": reference, "show_group_mean_sd": show_group}
+        except ValueError as exc:
+            st.error(f"well 비교 그래프: {exc}")
+            return
+
         with st.expander("조건별 평균·SD·합 스펙트럼과 칩별 모음"):
-            st.caption("같은 Raman shift 격자의 칩만 한 표로 합칩니다. 서로 다른 격자도 각 칩의 구간 최대값 통계는 계산할 수 있습니다.")
-            for group in edited.group_label.drop_duplicates():
+            st.caption("같은 Raman shift 격자의 칩만 한 표로 합칩니다. 다른 격자도 각 칩의 피크값 통계는 계산할 수 있습니다.")
+            for group_index, group in enumerate(group_names, 1):
                 selected = [c for i, c in enumerate(named_chips) if sources[i]["group_label"] == group]
                 try:
                     frame = group_spectrum_frame(selected, mode=mode, independent=options.independent)
-                    group_index = list(edited.group_label.drop_duplicates()).index(group) + 1
                     group_stem = f"group_{group_index:03d}_{_chip_safe_name(group)}"
                     tables[f"{group_stem}_spectra_statistics.csv"] = frame
                     collection = pd.DataFrame({"Raman_shift_cm-1": selected[0].x})
@@ -289,9 +379,9 @@ def render_chip_tools(between=False):
                     st.warning(f"{group}: {exc}")
                     skipped_spectrum_groups.append({"group_label": str(group), "reason": str(exc)})
     manifest = _chip_manifest(options, mode, lo, hi, sources)
-    manifest["skipped_group_spectra"] = skipped_spectrum_groups
-    st.download_button("전체 결과 ZIP 저장", _chip_zip(tables, manifest, png),
+    manifest.update(skipped_group_spectra=skipped_spectrum_groups, graph_settings=plot_settings,
+                    overview=overview_config, app_version="2.0")
+    st.download_button("전체 결과 ZIP 저장", _chip_zip(tables, manifest, png, graphs=graphs),
                        "rslab_between_chip_results.zip" if between else "rslab_within_chip_results.zip",
                        "application/zip", key=f"{prefix}_zip", use_container_width=True)
-    st.caption("ZIP에는 통계 CSV, 처리된 mapping, 좌표, 칩 조건, 처리 설정, 그래프가 포함됩니다.")
-
+    st.caption("ZIP에는 통계 CSV, 처리된 mapping, 좌표, 칩 조건, 처리·그래프 설정, 그래프가 포함됩니다.")

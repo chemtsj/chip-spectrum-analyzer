@@ -349,3 +349,116 @@ def group_spectrum_frame(chips: list[ChipData], mode: str = "MEAN", independent:
         "N_chips": count,
         "MEAN_SEM_independent_estimate": sd / np.sqrt(count) if independent else unknown,
     })
+
+
+def overview_frame(chips: list[ChipData], groups: list[str], mode: str = "MEAN",
+                   lo: float = 900., hi: float = 950., method: str = "chip_peak",
+                   reference_x: float | None = None,
+                   independent: bool = False) -> pd.DataFrame:
+    """Return one bar per chip with an explicitly defined within-chip error.
+
+    ``chip_peak`` chooses each chip's representative-spectrum maximum in the
+    inclusive ``lo``/``hi`` window, matching :func:`peak_record`. The spatial
+    SD is evaluated across that chip's mapping points at the selected sampled
+    shift. It is not the SD of separate point maxima and it is not SEM.
+
+    ``fixed_x`` chooses the sampled shift nearest ``reference_x`` separately
+    for every chip; ties select the lower shift. A reference outside any chip's
+    measured range is rejected. No interpolation or extrapolation is used.
+
+    ``value`` is MEAN or SUM at the chosen shift. MEAN ``error`` is spatial
+    sample SD. SUM ``error`` is NaN unless ``independent`` enables the estimate
+    sqrt(N_points)*spatial SD. At N_points=1 all SD/error fields remain NaN.
+    ``requested_x``/``x_offset`` are NaN for chip_peak because no fixed shift
+    was requested. Group summaries must be computed from these same heights.
+    """
+    if not chips or len(chips) != len(groups):
+        raise ValueError("각 chip에 대응하는 조건 이름이 하나씩 필요합니다.")
+    names = [str(chip.name).strip() for chip in chips]
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("칩 이름은 비어 있거나 중복될 수 없습니다.")
+    group_names = []
+    for group in groups:
+        if group is None or pd.isna(group) or not str(group).strip():
+            raise ValueError("조건 이름을 모두 입력해 주세요.")
+        group_names.append(str(group).strip())
+    if mode not in ("MEAN", "SUM"):
+        raise ValueError("통계 모드는 MEAN 또는 SUM이어야 합니다.")
+    if method not in ("chip_peak", "fixed_x"):
+        raise ValueError("막대 값 계산 기준은 chip_peak 또는 fixed_x여야 합니다.")
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo > hi:
+        raise ValueError("피크 구간의 최소/최대값을 확인해 주세요.")
+    if reference_x is not None and not np.isfinite(reference_x):
+        raise ValueError("지정 파수는 유한한 숫자여야 합니다.")
+    if method == "fixed_x" and reference_x is None:
+        raise ValueError("고정 파수 비교에는 지정 파수를 입력해 주세요.")
+
+    output = []
+    for chip, group in zip(chips, group_names):
+        peak = None
+        if method == "chip_peak":
+            peak = peak_record(chip, mode, lo, hi)
+            selected = int(np.searchsorted(chip.x, peak["peak_x"]))
+            requested, offset = np.nan, np.nan
+        else:
+            requested = float(reference_x)
+            if not chip.x[0] <= requested <= chip.x[-1]:
+                raise ValueError(f"{chip.name}: 지정 파수 {requested:g} cm⁻¹가 측정 범위 "
+                                 f"{chip.x[0]:g}–{chip.x[-1]:g} cm⁻¹ 밖입니다.")
+            selected = int(np.argmin(np.abs(chip.x - requested)))
+            offset = float(chip.x[selected] - requested)
+        point_values = chip.y[selected, :]
+        count = len(point_values)
+        mean = float(np.mean(point_values))
+        sd = float(np.std(point_values, ddof=1)) if count > 1 else np.nan
+        total = float(np.sum(point_values))
+        sum_sd = float(np.sqrt(count) * sd) if independent else np.nan
+        item = {
+            "chip_name": chip.name, "group_label": group,
+            "statistic": mode, "method": method,
+            "requested_x": requested,
+            "Raman_shift_cm-1": float(chip.x[selected]),
+            "x_offset": offset,
+            "value": mean if mode == "MEAN" else total,
+            "error": sd if mode == "MEAN" else sum_sd,
+            "error_basis": ("within_chip_spatial_SD" if mode == "MEAN" else
+                            "independent_sum_SD_estimate" if independent else "not_estimated"),
+            "MEAN": mean, "SD_within_chip": sd, "SUM": total,
+            "SUM_SD_independent_estimate": sum_sd, "N_points": int(count),
+            "window_min": float(lo), "window_max": float(hi),
+            "tie_count": peak["tie_count"] if peak else np.nan,
+            "peak_at_boundary": peak["peak_at_boundary"] if peak else False,
+        }
+        output.append(item)
+    return pd.DataFrame(output)
+
+
+def overview_group_summary(overview: pd.DataFrame,
+                           independent: bool = False) -> pd.DataFrame:
+    """Equal-chip group statistics of the exact heights in overview_frame.
+
+    The resulting ``value_mean`` and ``value_sd`` are suitable for overlays on
+    the well-bar overview. This must replace maximum-peak group statistics when
+    the overview uses a fixed shift. Mapping-point counts never weight a chip.
+    """
+    required = ["chip_name", "group_label", "statistic", "method", "value", "requested_x"]
+    if overview.empty or any(column not in overview for column in required):
+        raise ValueError("막대 요약에 필요한 칩별 값과 계산 기준이 없습니다.")
+    if overview["method"].isna().any() or not overview["method"].isin(["chip_peak", "fixed_x"]).all():
+        raise ValueError("막대 값 계산 기준을 확인해 주세요.")
+    for _, group in overview.groupby(["group_label", "statistic"], sort=False, dropna=False):
+        if group["method"].nunique() != 1:
+            raise ValueError("같은 조건의 막대는 같은 계산 기준을 사용해야 합니다.")
+        if group["method"].iloc[0] == "fixed_x":
+            reference = pd.to_numeric(group["requested_x"], errors="coerce")
+            if not np.isfinite(reference).all() or reference.nunique() != 1:
+                raise ValueError("같은 조건의 모든 칩에 동일한 지정 파수를 적용해 주세요.")
+    adapter = overview.rename(columns={"value": "peak_intensity"})
+    grouped = group_peak_summary(adapter, independent=independent).rename(columns={
+        "peak_mean": "value_mean", "peak_sd": "value_sd", "peak_sum": "value_sum",
+    })
+    metadata = overview.groupby(["group_label", "statistic"], sort=False, dropna=False).agg(
+        method=("method", "first"), requested_x=("requested_x", "first"),
+    ).reset_index()
+    return grouped.merge(metadata, on=["group_label", "statistic"], how="left", sort=False,
+                         validate="one_to_one")

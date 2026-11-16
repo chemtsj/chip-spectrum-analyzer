@@ -1,128 +1,118 @@
-개인용 Chip Spectrum Analyzer — GitHub부터 Streamlit 배포까지
+RSLAB Chip Spectrum Analyzer — v2.0
 
-이 파일 묶음은 기존 RSLAB 앱과 별도로 실행하는 칩 분석용 시작 버전입니다.
-기존 프로그램의 baseline 보정과 그래프·피크 추출에 해당하는 기능을 담았고,
-모든 기존 화면이나 일반 스펙트럼 편집 기능을 복사한 버전은 아닙니다.
+기존 사이트 업데이트
 
-현재 기능:
-- 칩 내 처리: mapping TXT/CSV 읽기, 파수별 평균·표본 SD·합, 대표 스펙트럼
-- 칩 간 처리: 여러 파일의 칩 이름·조건 편집, 칩별 피크, 조건별 평균·SD
-- 각 측정점에 AsLS 또는 Polynomial baseline 선택 적용
-- 검색 구간 최대값 및 파수 추출
-- 통계 CSV, PNG, 전체 결과 ZIP 저장
+1. ZIP 압축을 풉니다.
+2. 기존 GitHub 저장소에서 Streamlit에 연결된 branch(main 등)를 엽니다.
+3. Add file > Upload files에서 폴더 안의 아래 7개 파일을 기존 위치에 올립니다.
+   app.py가 저장소 첫 화면에 바로 보이는 구조를 유지합니다.
 
-파일 설명:
-app.py: 실행할 첫 화면. Streamlit의 Main file path에 입력하는 파일입니다.
-rslab_chip_analysis.py: 파일 읽기와 통계 계산.
-rslab_chip_ui.py: 두 분석 화면과 다운로드.
-requirements.txt: 설치할 Python 패키지 목록.
-packages.txt: Linux에서 그래프의 한글을 표시하기 위한 글꼴 설치.
-START_HERE.txt: 이 설명서. 실행에 꼭 필요한 파일은 아니지만 같이 올려도 됩니다.
+   app.py                       교체: 제목·마이크로칩 아이콘·버튼형 메뉴
+   rslab_chip_analysis.py         교체: well별 막대와 오차 계산 추가
+   rslab_chip_ui.py               교체: 조건별 업로드·새 화면·내보내기
+   rslab_chip_plots.py            새로 추가: 그래프 편집·스택·범례·세 종류의 그림
+   requirements.txt              기존과 동일한 Python 의존성 범위
+   packages.txt                  기존과 같은 한글 글꼴 설치
+   START_HERE.txt                이 설명서
 
-1. GitHub 저장소 만들기
+4. 변경 설명에 Update chip analyzer v2를 적고 Commit changes로 저장합니다.
+   새 branch라면 main에 병합해야 main에 연결된 사이트가 갱신됩니다.
+5. Streamlit이 파일 변경을 감지해 앱을 갱신합니다.
+   Main file path=app.py와 기존 사이트 주소를 유지합니다.
+6. 화면을 새로고침하고 왼쪽 아래 v2.0 표시를 확인합니다.
+   이전 화면이 계속 나오면 Streamlit Manage app에서 Reboot app을 실행합니다.
 
-https://github.com 에 가입 또는 로그인합니다.
-https://github.com/new 에서 새 저장소를 만듭니다.
-Repository name 예: chip-spectrum-analyzer
-Description 예: Personal Raman mapping and chip reproducibility analysis
-개인 연구용 시작 설정은 Private를 권장합니다.
-빈 저장소를 만든 뒤 upload an existing file 링크로 파일을 올려도 되고,
-Add a README file을 켜서 만든 뒤 Add file > Upload files를 이용해도 됩니다.
-이 패키지에는 README.md가 없으므로 GitHub에서 README를 자동 생성해도 충돌하지 않습니다.
-Create repository를 누릅니다.
+새 저장소나 새 Streamlit 앱을 만들 필요는 없습니다.
+압축을 푼 파일들을 올려야 합니다. 실험 데이터는 사이트에서 업로드합니다.
 
-2. 파일 올리기
+v2.0 기능
 
-ZIP 압축을 먼저 풉니다.
-chip_spectrum_starter 폴더 자체가 아니라 그 안의 파일 6개를 선택합니다.
-저장소의 첫 화면에서 app.py가 바로 보이도록 가장 바깥에 올립니다.
-ZIP 파일 하나만 GitHub에 올리면 앱을 바로 실행할 수 없습니다.
+- RSLAB Chip Spectrum Analyzer 제목과 마이크로칩 아이콘.
+- 활성 상태가 색으로 표시되는 두 개의 왼쪽 메뉴 버튼.
+- 조건 수 지정, 조건별 별도 업로드 창과 조건명 입력.
+- 칩 이름은 확인 표에서, 조건 이름은 각 업로드 창에서 편집합니다.
+- 같은 조건명으로 입력한 여러 창은 한 조건으로 묶습니다.
 
-기존 파일 목록이 있다면 Add file > Upload files를 누릅니다.
-파일들을 끌어 넣고 저장 변경 메시지에 Initial chip analyzer를 입력합니다.
-새 개인 저장소에서는 main에 직접 저장해도 됩니다.
-Commit changes 버튼으로 저장합니다. 화면에 따라 Propose changes가 보이고
-새 branch가 만들어지면 해당 Pull request를 main에 병합해야 main 배포에 반영됩니다.
+'그래프 편집'에서 다음을 설정합니다.
+그림 크기·DPI·글꼴·글자 크기·배경, 축 제목·범위·눈금·테두리·격자,
+색상 팔레트·곡선별 색상·선 굵기·표시 여부,
+수직 스택·자동/지정 간격·개별 오프셋·위아래 반전,
+곡선 표시 순서와 범례 순서의 독립 편집, 범례 위치·바깥 배치·열 수·크기.
+PNG/PDF/SVG 그래프 다운로드를 제공합니다.
 
-실험 raw TXT/CSV를 저장소에 넣을 필요는 없습니다.
-사이트를 연 뒤 파일 업로드 버튼으로 선택해서 분석합니다.
+수직 스택 오프셋, 숨김, 축 범위, 표시 순서, 범례 이름은
+피크 계산이나 통계 CSV의 intensity를 변경하지 않습니다.
+분석 피크 검색 범위는 그래프 X축 범위와 별도로 설정합니다.
+전체 결과 ZIP의 processing_manifest.json에 처리·그래프 설정을 기록합니다.
 
-3. Streamlit 계정 연결
+조건별 칩 간 통계 그래프
 
-https://share.streamlit.io 에 접속합니다.
-Continue to sign-in > Continue with GitHub로 로그인합니다.
-GitHub 연결이 나오면 Authorize streamlit을 선택합니다.
-Private 저장소가 목록에 안 보이면 Streamlit의 계정/워크스페이스 Settings
-> Linked accounts > Source control에서 private 저장소 연결 권한을 확인합니다.
+색깔 점 하나 = well 하나의 대표 스펙트럼 구간 최대값.
+검은 점 = 같은 조건의 well 최대값 평균.
+검은 오차막대 = 그 well 최대값들 사이의 표본 SD.
+같은 조건의 모든 점은 같은 x좌표에 놓습니다.
 
-4. 앱 배포
+칩 내·칩 간 편차 한눈에 보기
 
-Create app을 누르고 기존 코드가 있다는 항목 (Yup, I have an app)을 선택합니다.
+막대 하나는 well 하나입니다. 같은 조건은 같은 색입니다.
+MEAN 모드의 높이는 선택된 파수에서의 mapping 위치별 평균 intensity,
+오차막대는 바로 그 파수에서 mapping 위치 간 표본 SD입니다.
+검은 점선은 같은 조건의 막대 높이 평균,
+조건별 음영은 그 well 값들 사이의 평균±칩 간 SD입니다.
+가로선과 음영을 숨겨 well별 막대·오차막대만 볼 수도 있습니다.
 
-Repository: 자신의 GitHub 아이디/chip-spectrum-analyzer
-Branch: main
-Main file path: app.py
-App URL: 원하는 이름 (선택 사항, 이미 쓰인 이름은 다른 이름으로 바꿉니다)
+막대 값의 두 가지 기준:
 
-Advanced settings의 Python version은 3.12로 선택합니다.
-이 앱은 API key나 Secrets 입력이 필요하지 않습니다.
-Deploy를 누르면 패키지와 글꼴을 설치한 뒤 앱을 시작합니다.
-완료되면 본인의 .streamlit.app 주소로 접속할 수 있습니다.
+1) 각 칩의 구간 최대값 (기본)
+   각 chip 대표 스펙트럼에서 지정 구간의 최대값 위치를 찾고,
+   그 위치의 intensity와 공간 SD를 사용합니다.
+   chip_peak_values.csv의 최대값과 막대 높이가 일치합니다.
+   chip마다 피크 파수가 다를 수 있고 실제 파수를 표에 기록합니다.
+   이 SD는 위치별 최대값을 따로 찾은 뒤 구한 SD가 아닙니다.
 
-5. 본인 전용 접속 설정
+2) 동일 파수에서 비교
+   비교 파수를 직접 입력합니다 (예: 측정 범위에 포함된 925 cm^-1).
+   각 chip에서 가장 가까운 실제 측정점의 값과 공간 SD를 사용합니다.
+   요청 파수, 실제 파수, 차이를 기록하며 보간·외삽하지 않습니다.
+   조건별 가로선과 SD 음영도 같은 막대 높이들로 다시 계산합니다.
+   기존 구간 최대값 통계와 혼동하지 않습니다.
 
-GitHub Private는 소스 코드의 공개 범위를 정하는 설정입니다.
-앱 사용자의 접속 범위는 Streamlit 앱 설정에서도 확인합니다.
-App settings > Sharing > Who can view this app에서
-Only specific people can view this app을 선택하면 비공개 앱으로 사용할 수 있습니다.
-Private 저장소에서 배포한 앱은 기본적으로 해당 워크스페이스 개발자에게만 열립니다.
-연구실 사람에게도 공유하려면 원하는 사람만 초대하면 됩니다.
-2026-11-16 공식 안내 기준 Community Cloud의 private app은 동시에 1개입니다.
+SUM 모드에서는 높이가 선택 파수에서 mapping intensity를 합한 값입니다.
+한 번 구한 SUM에서 반복 SUM의 SD를 직접 측정할 수 없으므로,
+독립·동일분포 가정을 켰을 때만 sqrt(N_points)×공간 SD 추정 오차를 표시합니다.
+가정이 꺼져 있으면 SUM 막대의 칩 내 오차막대는 표시하지 않습니다.
+칩 간 SD는 여러 well의 SUM 값들 사이에서 계산할 수 있습니다.
 
-6. 첫 사용 순서
+새 결과 CSV
 
-칩 내 데이터 처리 선택 → 한 chip 파일 업로드 → baseline 설정
-→ 평균/합 선택 → 피크 검색 범위 지정 → CSV 또는 전체 ZIP 저장.
+chip_overview_values.csv:
+well별 높이(value), 오차(error), 오차 정의(error_basis),
+조건, 비교 방법, 실제 파수, 측정점 수를 저장합니다.
 
-여러 chip은 칩 간 데이터 처리에서 올립니다.
-A1/A2/A3에 같은 조건 이름 1 mM, B1/B2/B3에 같은 조건 이름 3 mM을 적습니다.
-chip별 최대값을 먼저 구하고 조건별 평균과 SD를 계산합니다.
+chip_overview_group_statistics.csv:
+같은 막대 높이에서 계산한 조건별 well 평균·SD·합을 저장합니다.
 
-표본 SD는 ddof=1이며, mapping 위치 간 SD와 chip 간 SD를 구분합니다.
-합의 SD와 평균의 SEM 추정은 독립·동일분포 가정을 선택한 경우에만 출력합니다.
-보정된 mapping CSV를 넣으면 baseline은 없음으로 선택하세요.
-합산 스펙트럼에 추가 baseline을 한 번 더 적용하지 않습니다.
+전체 ZIP에는 대표 스펙트럼, 조건별 점·오차 그래프, well별 막대그래프 PNG,
+기존 통계·mapping CSV, 새 CSV, 처리·그래프 설정이 포함됩니다.
+PDF와 SVG는 각 그래프에서 개별 다운로드합니다.
 
-업로드·결과는 앱이 동작하는 동안 메모리에서 처리합니다.
-필요한 결과는 CSV 또는 ZIP으로 내려받아 보관하세요.
+통계 정의
 
-7. 나중에 수정하는 방법
+표본 SD는 ddof=1입니다. mapping 위치 간 SD와 독립 well 사이 SD를 구분합니다.
+칩 간 평균은 well마다 같은 비중을 주며 mapping 점 수로 가중하지 않습니다.
+표본 1개의 SD는 0이 아니라 빈칸입니다.
+보정된 mapping CSV는 baseline 없음으로 입력하세요.
+Baseline 선택 시 각 위치의 전체 스펙트럼을 먼저 보정한 뒤 평균·합을 구합니다.
+대표 스펙트럼에 baseline을 추가 적용하지 않습니다.
 
-GitHub에서 수정된 Python 파일을 같은 이름으로 올려 Commit하면,
-연결한 branch의 변경이 Streamlit 앱에 반영됩니다.
-파이썬 코드를 수정할 때마다 새 사이트를 만들 필요는 없습니다.
-설치 실패는 requirements.txt/packages.txt, 파일 없음은 Main file path와
-파일명 대소문자, import 오류는 rslab_chip_analysis.py/rslab_chip_ui.py 위치를 확인합니다.
-Streamlit Manage app의 로그에서 오류의 마지막 부분을 확인할 수 있습니다.
+로컬 실행 (원할 때만)
 
-8. 로컬 실행을 원할 때만
-
-Python 3.12 환경에서 이 폴더로 이동한 후:
+Python 3.12 환경에서:
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 
-GitHub 웹 업로드와 Community Cloud 배포만 사용할 때는
-본인 컴퓨터에 Python이나 Git을 먼저 설치할 필요가 없습니다.
+실제 Streamlit 서버/브라우저 배포 검증은 이 실행 환경에서 수행하지 못했습니다.
+순수 수치·그림·내보내기와 대역 객체를 이용한 화면 흐름을 검사했습니다.
 
-검증 범위:
-칩 분석 핵심 계산과 내보내기는 앞서 검사한 모듈을 재사용합니다.
-실제 Streamlit 서버/브라우저 배포 검증은 이 환경에서 수행하지 못했습니다.
-이 묶음은 배포 준비 파일이며 GitHub 저장소나 운영 사이트를 생성한 것은 아닙니다.
-
-공식 안내:
-https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository
-https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository
-https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/quickstart
-https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/connect-your-github-account
-https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy
-https://docs.streamlit.io/deploy/streamlit-community-cloud/share-your-app
+공식 업데이트 안내:
+https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/edit-your-app
