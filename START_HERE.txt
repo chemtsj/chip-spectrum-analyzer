@@ -1,0 +1,128 @@
+개인용 Chip Spectrum Analyzer — GitHub부터 Streamlit 배포까지
+
+이 파일 묶음은 기존 RSLAB 앱과 별도로 실행하는 칩 분석용 시작 버전입니다.
+기존 프로그램의 baseline 보정과 그래프·피크 추출에 해당하는 기능을 담았고,
+모든 기존 화면이나 일반 스펙트럼 편집 기능을 복사한 버전은 아닙니다.
+
+현재 기능:
+- 칩 내 처리: mapping TXT/CSV 읽기, 파수별 평균·표본 SD·합, 대표 스펙트럼
+- 칩 간 처리: 여러 파일의 칩 이름·조건 편집, 칩별 피크, 조건별 평균·SD
+- 각 측정점에 AsLS 또는 Polynomial baseline 선택 적용
+- 검색 구간 최대값 및 파수 추출
+- 통계 CSV, PNG, 전체 결과 ZIP 저장
+
+파일 설명:
+app.py: 실행할 첫 화면. Streamlit의 Main file path에 입력하는 파일입니다.
+rslab_chip_analysis.py: 파일 읽기와 통계 계산.
+rslab_chip_ui.py: 두 분석 화면과 다운로드.
+requirements.txt: 설치할 Python 패키지 목록.
+packages.txt: Linux에서 그래프의 한글을 표시하기 위한 글꼴 설치.
+START_HERE.txt: 이 설명서. 실행에 꼭 필요한 파일은 아니지만 같이 올려도 됩니다.
+
+1. GitHub 저장소 만들기
+
+https://github.com 에 가입 또는 로그인합니다.
+https://github.com/new 에서 새 저장소를 만듭니다.
+Repository name 예: chip-spectrum-analyzer
+Description 예: Personal Raman mapping and chip reproducibility analysis
+개인 연구용 시작 설정은 Private를 권장합니다.
+빈 저장소를 만든 뒤 upload an existing file 링크로 파일을 올려도 되고,
+Add a README file을 켜서 만든 뒤 Add file > Upload files를 이용해도 됩니다.
+이 패키지에는 README.md가 없으므로 GitHub에서 README를 자동 생성해도 충돌하지 않습니다.
+Create repository를 누릅니다.
+
+2. 파일 올리기
+
+ZIP 압축을 먼저 풉니다.
+chip_spectrum_starter 폴더 자체가 아니라 그 안의 파일 6개를 선택합니다.
+저장소의 첫 화면에서 app.py가 바로 보이도록 가장 바깥에 올립니다.
+ZIP 파일 하나만 GitHub에 올리면 앱을 바로 실행할 수 없습니다.
+
+기존 파일 목록이 있다면 Add file > Upload files를 누릅니다.
+파일들을 끌어 넣고 저장 변경 메시지에 Initial chip analyzer를 입력합니다.
+새 개인 저장소에서는 main에 직접 저장해도 됩니다.
+Commit changes 버튼으로 저장합니다. 화면에 따라 Propose changes가 보이고
+새 branch가 만들어지면 해당 Pull request를 main에 병합해야 main 배포에 반영됩니다.
+
+실험 raw TXT/CSV를 저장소에 넣을 필요는 없습니다.
+사이트를 연 뒤 파일 업로드 버튼으로 선택해서 분석합니다.
+
+3. Streamlit 계정 연결
+
+https://share.streamlit.io 에 접속합니다.
+Continue to sign-in > Continue with GitHub로 로그인합니다.
+GitHub 연결이 나오면 Authorize streamlit을 선택합니다.
+Private 저장소가 목록에 안 보이면 Streamlit의 계정/워크스페이스 Settings
+> Linked accounts > Source control에서 private 저장소 연결 권한을 확인합니다.
+
+4. 앱 배포
+
+Create app을 누르고 기존 코드가 있다는 항목 (Yup, I have an app)을 선택합니다.
+
+Repository: 자신의 GitHub 아이디/chip-spectrum-analyzer
+Branch: main
+Main file path: app.py
+App URL: 원하는 이름 (선택 사항, 이미 쓰인 이름은 다른 이름으로 바꿉니다)
+
+Advanced settings의 Python version은 3.12로 선택합니다.
+이 앱은 API key나 Secrets 입력이 필요하지 않습니다.
+Deploy를 누르면 패키지와 글꼴을 설치한 뒤 앱을 시작합니다.
+완료되면 본인의 .streamlit.app 주소로 접속할 수 있습니다.
+
+5. 본인 전용 접속 설정
+
+GitHub Private는 소스 코드의 공개 범위를 정하는 설정입니다.
+앱 사용자의 접속 범위는 Streamlit 앱 설정에서도 확인합니다.
+App settings > Sharing > Who can view this app에서
+Only specific people can view this app을 선택하면 비공개 앱으로 사용할 수 있습니다.
+Private 저장소에서 배포한 앱은 기본적으로 해당 워크스페이스 개발자에게만 열립니다.
+연구실 사람에게도 공유하려면 원하는 사람만 초대하면 됩니다.
+2026-11-16 공식 안내 기준 Community Cloud의 private app은 동시에 1개입니다.
+
+6. 첫 사용 순서
+
+칩 내 데이터 처리 선택 → 한 chip 파일 업로드 → baseline 설정
+→ 평균/합 선택 → 피크 검색 범위 지정 → CSV 또는 전체 ZIP 저장.
+
+여러 chip은 칩 간 데이터 처리에서 올립니다.
+A1/A2/A3에 같은 조건 이름 1 mM, B1/B2/B3에 같은 조건 이름 3 mM을 적습니다.
+chip별 최대값을 먼저 구하고 조건별 평균과 SD를 계산합니다.
+
+표본 SD는 ddof=1이며, mapping 위치 간 SD와 chip 간 SD를 구분합니다.
+합의 SD와 평균의 SEM 추정은 독립·동일분포 가정을 선택한 경우에만 출력합니다.
+보정된 mapping CSV를 넣으면 baseline은 없음으로 선택하세요.
+합산 스펙트럼에 추가 baseline을 한 번 더 적용하지 않습니다.
+
+업로드·결과는 앱이 동작하는 동안 메모리에서 처리합니다.
+필요한 결과는 CSV 또는 ZIP으로 내려받아 보관하세요.
+
+7. 나중에 수정하는 방법
+
+GitHub에서 수정된 Python 파일을 같은 이름으로 올려 Commit하면,
+연결한 branch의 변경이 Streamlit 앱에 반영됩니다.
+파이썬 코드를 수정할 때마다 새 사이트를 만들 필요는 없습니다.
+설치 실패는 requirements.txt/packages.txt, 파일 없음은 Main file path와
+파일명 대소문자, import 오류는 rslab_chip_analysis.py/rslab_chip_ui.py 위치를 확인합니다.
+Streamlit Manage app의 로그에서 오류의 마지막 부분을 확인할 수 있습니다.
+
+8. 로컬 실행을 원할 때만
+
+Python 3.12 환경에서 이 폴더로 이동한 후:
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+
+GitHub 웹 업로드와 Community Cloud 배포만 사용할 때는
+본인 컴퓨터에 Python이나 Git을 먼저 설치할 필요가 없습니다.
+
+검증 범위:
+칩 분석 핵심 계산과 내보내기는 앞서 검사한 모듈을 재사용합니다.
+실제 Streamlit 서버/브라우저 배포 검증은 이 환경에서 수행하지 못했습니다.
+이 묶음은 배포 준비 파일이며 GitHub 저장소나 운영 사이트를 생성한 것은 아닙니다.
+
+공식 안내:
+https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository
+https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository
+https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/quickstart
+https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/connect-your-github-account
+https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy
+https://docs.streamlit.io/deploy/streamlit-community-cloud/share-your-app
