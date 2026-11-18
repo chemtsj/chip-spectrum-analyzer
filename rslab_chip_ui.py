@@ -44,6 +44,89 @@ def _chip_default_name(filename):
     return match.group(1).upper() if match else Path(filename).stem
 
 
+def _chip_upload_location(file_id):
+    match = re.fullmatch(r"condition_(\d+)_file_(\d+)", str(file_id))
+    return (f"조건 {int(match[1])} · 파일 {int(match[2])}"
+            if match else str(file_id))
+
+
+def _chip_metadata_issues(frame):
+    """Check the edited names, marking every occurrence of a duplicate name."""
+    edited = frame.copy()
+    for column in ("chip_name", "group_label"):
+        edited[column] = edited[column].fillna("").astype(str).str.strip()
+    duplicates = edited.chip_name.ne("") & edited.chip_name.duplicated(keep=False)
+    issues = []
+    for position, (_, row) in enumerate(edited.iterrows(), 1):
+        reasons = []
+        if duplicates.iloc[position - 1]:
+            reasons.append("칩 이름 중복")
+        if not row.chip_name:
+            reasons.append("칩 이름 없음")
+        if not row.group_label:
+            reasons.append("조건 이름 없음")
+        if reasons:
+            issues.append({"문제": " · ".join(reasons),
+                           "칩 이름": row.chip_name or "(빈칸)",
+                           "조건명": row.group_label or "(빈칸)",
+                           "업로드 위치": _chip_upload_location(row.get("file_id", position)),
+                           "원본 파일명": row.get("source_file", "")})
+    return edited, pd.DataFrame(issues, columns=["문제", "칩 이름", "조건명", "업로드 위치", "원본 파일명"])
+
+
+def _chip_duplicate_data_rows(chips, sources):
+    """Report separate groups of identical processed X/Y arrays, not mean curves."""
+    groups = {}
+    for index, chip in enumerate(chips):
+        digest = hashlib.sha256()
+        for array in (chip.x, chip.y):
+            values = np.asarray(array, dtype="<f8").copy(order="C")
+            # Numeric equality treats +0 and -0 as the same value.
+            values[values == 0] = 0
+            digest.update(str(values.shape).encode("ascii"))
+            digest.update(values.tobytes())
+        groups.setdefault(digest.hexdigest(), []).append(index)
+    duplicates = [members for members in groups.values() if len(members) > 1]
+    rows = []
+    for number, members in enumerate(duplicates, 1):
+        for index in members:
+            source = sources[index]
+            rows.append({"동일 데이터 묶음": f"묶음 {number} ({len(members)}개 파일)",
+                         "칩 이름": source["chip_name"], "조건명": source["group_label"],
+                         "업로드 위치": _chip_upload_location(source["file_id"]),
+                         "원본 파일명": source["source_file"]})
+    return pd.DataFrame(rows, columns=["동일 데이터 묶음", "칩 이름", "조건명", "업로드 위치", "원본 파일명"])
+
+
+def _chip_warning_table(frame, kind):
+    """Render an escaped diagnostic table; editable cells do not support colors.
+
+    Keeping this table separate from data_editor also avoids resetting the
+    editor's input or showing checks from the previous edit on a rerun.
+    """
+    if frame.empty:
+        return
+    color, background, border = (("#991b1b", "#fff1f2", "#fda4af") if kind == "name"
+                                 else ("#78350f", "#fffbeb", "#fbbf24"))
+    label = "칩 이름 오류 파일 목록" if kind == "name" else "동일한 mapping 데이터 파일 목록"
+    head = "".join(f'<th scope="col" style="padding:10px 12px;text-align:left;white-space:nowrap;'
+                   f'border-bottom:2px solid {border};">{html.escape(str(column))}</th>'
+                   for column in frame.columns)
+    body = []
+    for values in frame.itertuples(index=False, name=None):
+        cells = "".join(f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+                        f'white-space:nowrap;">{html.escape(str(value))}</td>' for value in values)
+        body.append(f"<tr>{cells}</tr>")
+    st.markdown(
+        f'<div class="rslab-chip-diagnostic" style="overflow-x:auto;margin:10px 0 14px;'
+        f'border:1px solid {border};border-radius:10px;background:{background};color:{color};">'
+        f'<table aria-label="{label}" style="width:100%;border-collapse:collapse;'
+        f'font-size:.9rem;color:{color};background:{background};">'
+        f'<thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _chip_section(title, number):
     """Separate analysis stages with a divider and a shaded, static heading."""
     if number > 1:
@@ -285,13 +368,11 @@ def render_chip_tools(between=False):
                                 key=f"{prefix}_groups_{signature}").copy()
         # Condition names belong to their upload slots, not the editor's stale state.
         edited["group_label"] = assigned_groups
-        if edited[["chip_name", "group_label"]].isna().any().any():
-            st.error("칩 이름과 조건 이름을 모두 입력하세요.")
-            return
-        for col in ["chip_name", "group_label"]:
-            edited[col] = edited[col].astype(str).str.strip()
-        if (edited[["chip_name", "group_label"]] == "").any().any() or edited.chip_name.duplicated().any():
-            st.error("칩 이름은 중복 없이 입력하고, 칩 이름과 조건 이름을 빈칸으로 두지 마세요.")
+        edited, name_issues = _chip_metadata_issues(edited)
+        if not name_issues.empty:
+            st.error(f"칩 이름 중복 또는 빈칸이 있는 파일 {len(name_issues)}개를 아래 빨간 표에 표시했습니다. 이름을 수정하면 다시 검사합니다.")
+            _chip_warning_table(name_issues, "name")
+            st.caption("위 편집표의 chip_name 칸에서 이름을 고친 뒤 Enter를 누르거나 다른 칸을 클릭하세요. 조건명은 해당 업로드 창에서 수정하세요. 원본 파일명은 바뀌지 않습니다.")
             return
     else:
         section("칩 이름 확인")
@@ -304,9 +385,11 @@ def render_chip_tools(between=False):
     for i, source in enumerate(sources):
         source.update(chip_name=named_chips[i].name, group_label=str(edited.iloc[i].group_label))
     if between:
-        hashes = [hashlib.sha256(c.x.tobytes()+c.y.tobytes()).hexdigest() for c in chips]
-        if len(set(hashes)) < len(hashes):
-            st.warning("내용이 완전히 같은 mapping 데이터가 있습니다. 같은 파일을 반복 칩으로 올리지 않았는지 확인하세요.")
+        duplicate_data = _chip_duplicate_data_rows(chips, sources)
+        if not duplicate_data.empty:
+            st.warning("분석에 사용하는 파수·intensity 값이 완전히 같은 파일이 있습니다. 아래 표에서 같은 묶음에 속한 파일들을 확인하세요.")
+            _chip_warning_table(duplicate_data, "data")
+            st.caption("현재 baseline 설정을 적용한 전체 mapping 배열을 비교합니다. 평균 스펙트럼이나 파일명만으로 판단하지 않습니다. 잘못 올린 파일은 해당 업로드 창에서 삭제·교체하세요. 칩 이름을 바꿔도 이 경고는 사라지지 않습니다.")
             if not st.checkbox("동일한 데이터가 서로 다른 칩에서 측정된 것이므로 포함", key=f"{prefix}_duplicates_{signature}"):
                 return
         if mode == "SUM" and len({c.y.shape[1] for c in chips}) > 1:
