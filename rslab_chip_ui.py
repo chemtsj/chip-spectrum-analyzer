@@ -40,8 +40,25 @@ def _chip_safe_name(name):
 
 
 def _chip_default_name(filename):
-    match = re.search(r"(?<![A-Za-z0-9])([A-H](?:1[0-2]|[1-9]))(?!\d)", filename, re.I)
-    return match.group(1).upper() if match else Path(filename).stem
+    """Read A1–Z12 labels, preferring the sample's parenthesized chip code."""
+    stem = Path(filename).stem
+    token = r"[A-Z](?:1[0-2]|[1-9])"
+    match = re.search(rf"\(\s*({token})\s*\)", stem, re.I)
+    if not match:
+        # Acquisition suffixes such as _785nm_10mW_x10_3s are not chip codes.
+        sample_name = re.split(r"[_\s-]\d+(?:\.\d+)?\s*nm(?=[_\s-]|$)",
+                               stem, maxsplit=1, flags=re.I)[0]
+        match = re.search(rf"(?<![A-Za-z0-9])({token})(?![A-Za-z0-9])", sample_name, re.I)
+    return match.group(1).upper() if match else stem
+
+
+@st.fragment
+def _chip_download_button(*args, **kwargs):
+    """Keep downloads from rerunning analysis, including on Streamlit 1.37–1.43."""
+    version = re.match(r"(\d+)\.(\d+)", getattr(st, "__version__", ""))
+    if version and tuple(map(int, version.groups())) >= (1, 44):
+        kwargs["on_click"] = "ignore"
+    return st.download_button(*args, **kwargs)
 
 
 def _chip_upload_location(file_id):
@@ -222,7 +239,7 @@ def _chip_figure_download(fig, stem, prefix, settings):
     extension = choice.lower()
     data = png if extension == "png" else figure_bytes(fig, extension, dpi=settings.get("dpi", 180))
     mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}[extension]
-    st.download_button(f"{choice} 저장", data, f"{stem}.{extension}", mime, key=f"{prefix}_download")
+    _chip_download_button(f"{choice} 저장", data, f"{stem}.{extension}", mime, key=f"{prefix}_download")
     plt.close(fig)
     return png
 
@@ -450,14 +467,16 @@ def render_chip_tools(between=False):
     if not common_grid:
         st.caption("칩별 파수축이 달라 통합 CSV에는 각 칩의 X–Y 쌍을 따로 저장합니다. 길이가 짧은 열은 빈칸으로 두며 보간하지 않습니다.")
     csv_col, zip_col = st.columns(2)
-    csv_col.download_button(f"칩별 {operation} 스펙트럼 CSV 저장", _chip_csv(spectrum_data), spectrum_filename,
-                            "text/csv", key=f"{prefix}_spectrum_csv", use_container_width=True)
-    zip_col.download_button("칩별 스펙트럼 CSV 묶음 저장", _chip_zip(spectrum_tables, spectrum_manifest),
-                            f"chip_{mode.lower()}_spectra.zip", "application/zip", key=f"{prefix}_spectrum_zip",
-                            use_container_width=True)
+    with csv_col:
+        _chip_download_button(f"칩별 {operation} 스펙트럼 CSV 저장", _chip_csv(spectrum_data), spectrum_filename,
+                              "text/csv", key=f"{prefix}_spectrum_csv", use_container_width=True)
+    with zip_col:
+        _chip_download_button("칩별 스펙트럼 CSV 묶음 저장", _chip_zip(spectrum_tables, spectrum_manifest),
+                              f"chip_{mode.lower()}_spectra.zip", "application/zip", key=f"{prefix}_spectrum_zip",
+                              use_container_width=True)
     section("칩별 구간 최대값")
     st.dataframe(peaks, use_container_width=True, hide_index=True)
-    st.download_button("칩별 최대값 CSV 저장", _chip_csv(peaks), "chip_peak_values.csv", "text/csv", key=f"{prefix}_peaks")
+    _chip_download_button("칩별 최대값 CSV 저장", _chip_csv(peaks), "chip_peak_values.csv", "text/csv", key=f"{prefix}_peaks")
     tables = {"chip_peak_values.csv": peaks, "chip_conditions.csv": pd.DataFrame(sources), **spectrum_tables}
     for i, chip in enumerate(named_chips, 1):
         stem = f"{i:03d}_{_chip_safe_name(chip.name)}"
@@ -474,7 +493,7 @@ def render_chip_tools(between=False):
             section("각 파수의 칩 내 통계")
             st.caption(f"{chip.y.shape[1]}개 측정점, {len(chip.x)}개 파수. MEAN 옆 SD는 위치 간 표준편차입니다.")
             st.dataframe(summary, use_container_width=True, hide_index=True)
-            st.download_button("평균·SD·합 CSV 저장", _chip_csv(summary), f"{stem}_statistics.csv", "text/csv", key=f"{prefix}_stats")
+            _chip_download_button("평균·SD·합 CSV 저장", _chip_csv(summary), f"{stem}_statistics.csv", "text/csv", key=f"{prefix}_stats")
 
     skipped_spectrum_groups = []
     overview_config = None
@@ -484,7 +503,7 @@ def render_chip_tools(between=False):
         section("조건별 칩 간 통계")
         st.caption("색깔 점은 각 well, 검은 점과 오차막대는 조건별 well 평균±칩 간 SD입니다. 같은 조건의 점은 같은 세로줄에 놓입니다.")
         st.dataframe(grouped, use_container_width=True, hide_index=True)
-        st.download_button("조건별 통계 CSV 저장", _chip_csv(grouped), "group_peak_statistics.csv", "text/csv", key=f"{prefix}_group_stats")
+        _chip_download_button("조건별 통계 CSV 저장", _chip_csv(grouped), "group_peak_statistics.csv", "text/csv", key=f"{prefix}_group_stats")
         tables["group_peak_statistics.csv"] = grouped
         try:
             settings = graph_editor(group_names, f"{prefix}_groups", spectrum=False)
@@ -536,9 +555,9 @@ def render_chip_tools(between=False):
             tables["chip_overview_values.csv"] = overview
             tables["chip_overview_group_statistics.csv"] = overview_groups
             st.dataframe(overview, use_container_width=True, hide_index=True)
-            st.download_button("well별 막대·오차값 CSV 저장", _chip_csv(overview), "chip_overview_values.csv", "text/csv", key=f"{prefix}_overview_values")
+            _chip_download_button("well별 막대·오차값 CSV 저장", _chip_csv(overview), "chip_overview_values.csv", "text/csv", key=f"{prefix}_overview_values")
             st.dataframe(overview_groups, use_container_width=True, hide_index=True)
-            st.download_button("막대 기준 조건별 통계 CSV 저장", _chip_csv(overview_groups), "chip_overview_group_statistics.csv", "text/csv", key=f"{prefix}_overview_group_values")
+            _chip_download_button("막대 기준 조건별 통계 CSV 저장", _chip_csv(overview_groups), "chip_overview_group_statistics.csv", "text/csv", key=f"{prefix}_overview_group_values")
             overview_config = {"method": method, "reference_x": reference, "show_group_mean_sd": show_group}
         except ValueError as exc:
             st.error(f"well 비교 그래프: {exc}")
@@ -559,7 +578,7 @@ def render_chip_tools(between=False):
                     tables[f"{group_stem}_chip_spectra.csv"] = collection
                     st.write(str(group))
                     st.dataframe(frame, use_container_width=True, hide_index=True)
-                    st.download_button(f"{group} 스펙트럼 통계 CSV 저장", _chip_csv(frame), f"{group_stem}_spectra_statistics.csv", "text/csv", key=f"{prefix}_spectrum_{group_index}")
+                    _chip_download_button(f"{group} 스펙트럼 통계 CSV 저장", _chip_csv(frame), f"{group_stem}_spectra_statistics.csv", "text/csv", key=f"{prefix}_spectrum_{group_index}")
                 except ValueError as exc:
                     st.warning(f"{group}: {exc}")
                     skipped_spectrum_groups.append({"group_label": str(group), "reason": str(exc)})
@@ -567,7 +586,7 @@ def render_chip_tools(between=False):
     manifest.update(skipped_group_spectra=skipped_spectrum_groups, graph_settings=plot_settings,
                     overview=overview_config, spectrum_export=spectrum_export, app_version="2.1")
     section("전체 결과 저장")
-    st.download_button("전체 결과 ZIP 저장", _chip_zip(tables, manifest, png, graphs=graphs),
+    _chip_download_button("전체 결과 ZIP 저장", _chip_zip(tables, manifest, png, graphs=graphs),
                        "rslab_between_chip_results.zip" if between else "rslab_within_chip_results.zip",
                        "application/zip", key=f"{prefix}_zip", use_container_width=True)
     st.caption("ZIP에는 통계 CSV, 처리된 mapping, 좌표, 칩 조건, 처리·그래프 설정, 그래프가 포함됩니다.")
