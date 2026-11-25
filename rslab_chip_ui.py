@@ -52,6 +52,22 @@ def _chip_default_name(filename):
     return match.group(1).upper() if match else stem
 
 
+def _chip_natural_key(name):
+    """Compare numeric parts as numbers: J1, J2, J10, including edited names."""
+    return tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
+                 for part in re.split(r"(\d+)", str(name).strip()))
+
+
+def _chip_sorted_metadata(frame, group_order):
+    """Keep condition blocks in upload order, then naturally sort chip names."""
+    ranks = {name: index for index, name in enumerate(dict.fromkeys(group_order))}
+    positions = sorted(range(len(frame)), key=lambda position: (
+        ranks[frame.iloc[position].group_label],
+        _chip_natural_key(frame.iloc[position].chip_name),
+    ))
+    return frame.iloc[positions].reset_index(drop=True).copy()
+
+
 @st.fragment
 def _chip_download_button(*args, **kwargs):
     """Keep downloads from rerunning analysis, including on Streamlit 1.37–1.43."""
@@ -322,11 +338,13 @@ No smoothing, normalization, spectral interpolation, or automatic outlier remova
 
 def _chip_manifest(options, mode, lo, hi, sources):
     from dataclasses import asdict
-    return {"module_version": "2.1", "statistic": mode, "peak_window_cm-1": [lo, hi],
+    return {"module_version": "2.2", "statistic": mode, "peak_window_cm-1": [lo, hi],
             "options": asdict(options), "sd_ddof": 1,
             "processing_order": "parse -> baseline each mapping point -> within-chip mean/sum -> each-chip maximum -> group statistics",
             "peak_tie_rule": "lowest sampled Raman shift", "grid_policy": "strict; no interpolation",
-            "group_weighting": "one chip, one equal weight", "sources": sources}
+            "group_weighting": "one chip, one equal weight",
+            "chip_ordering": "upload condition order, then natural chip_name order within each condition",
+            "sources": sources}
 
 
 def render_chip_tools(between=False):
@@ -380,17 +398,27 @@ def render_chip_tools(between=False):
         defaults = pd.DataFrame([{"file_id": s["file_id"], "source_file": s["source_file"],
                                   "chip_name": _chip_default_name(s["source_file"]),
                                   "group_label": s["upload_group"], "N_points": s["N_points"]} for s in sources])
+        # file_id remains the original upload slot even when display rows move.
+        chip_by_id = {source["file_id"]: chip for chip, source in zip(chips, sources)}
+        source_by_id = {source["file_id"]: source for source in sources}
+        group_by_id = {source["file_id"]: source["upload_group"] for source in sources}
+        defaults = _chip_sorted_metadata(defaults, assigned_groups)
+        st.caption("각 조건 안에서 칩 이름을 J1 → J2 → J3 → J10처럼 자동 정렬합니다. 이름을 수정하면 그래프·범례·CSV에도 수정된 이름 순서를 적용합니다.")
         edited = st.data_editor(defaults, hide_index=True, use_container_width=True,
                                 disabled=["file_id", "source_file", "group_label", "N_points"],
-                                key=f"{prefix}_groups_{signature}").copy()
-        # Condition names belong to their upload slots, not the editor's stale state.
-        edited["group_label"] = assigned_groups
+                                key=f"{prefix}_groups_natural_{signature}").copy()
+        # Restore source identity by upload slot, never by the sorted row position.
+        edited["group_label"] = edited.file_id.map(group_by_id)
+        edited["source_file"] = edited.file_id.map(lambda file_id: source_by_id[file_id]["source_file"])
         edited, name_issues = _chip_metadata_issues(edited)
         if not name_issues.empty:
             st.error(f"칩 이름 중복 또는 빈칸이 있는 파일 {len(name_issues)}개를 아래 빨간 표에 표시했습니다. 이름을 수정하면 다시 검사합니다.")
             _chip_warning_table(name_issues, "name")
             st.caption("위 편집표의 chip_name 칸에서 이름을 고친 뒤 Enter를 누르거나 다른 칸을 클릭하세요. 조건명은 해당 업로드 창에서 수정하세요. 원본 파일명은 바뀌지 않습니다.")
             return
+        edited = _chip_sorted_metadata(edited, assigned_groups)
+        chips = [chip_by_id[file_id] for file_id in edited.file_id]
+        sources = [source_by_id[file_id] for file_id in edited.file_id]
     else:
         section("칩 이름 확인")
         name = st.text_input("칩 이름", value=_chip_default_name(files[0].name), key=f"{prefix}_name_{signature}").strip()
@@ -542,8 +570,9 @@ def render_chip_tools(between=False):
             with st.expander("well 표시 순서", expanded=False):
                 order_table = pd.DataFrame({"chip_name": [c.name for c in named_chips],
                                             "display_order": range(1, len(named_chips)+1)})
+                order_signature = hashlib.sha256(json.dumps(order_table.chip_name.tolist()).encode()).hexdigest()[:12]
                 order_table = st.data_editor(order_table, disabled=["chip_name"], hide_index=True,
-                                             use_container_width=True, key=f"{prefix}_well_order_{signature}")
+                                             use_container_width=True, key=f"{prefix}_well_order_{signature}_{order_signature}")
                 ranks = pd.to_numeric(order_table["display_order"], errors="coerce")
                 if not np.isfinite(ranks).all():
                     raise ValueError("well 표시 순서에는 유한한 숫자를 입력하세요.")
@@ -584,7 +613,7 @@ def render_chip_tools(between=False):
                     skipped_spectrum_groups.append({"group_label": str(group), "reason": str(exc)})
     manifest = _chip_manifest(options, mode, lo, hi, sources)
     manifest.update(skipped_group_spectra=skipped_spectrum_groups, graph_settings=plot_settings,
-                    overview=overview_config, spectrum_export=spectrum_export, app_version="2.1")
+                    overview=overview_config, spectrum_export=spectrum_export, app_version="2.2")
     section("전체 결과 저장")
     _chip_download_button("전체 결과 ZIP 저장", _chip_zip(tables, manifest, png, graphs=graphs),
                        "rslab_between_chip_results.zip" if between else "rslab_within_chip_results.zip",

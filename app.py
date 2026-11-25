@@ -95,7 +95,7 @@ with st.sidebar:
             args=(page_label,),
         )
     st.divider()
-    st.caption("RSLAB Chip Spectrum Analyzer · v2.1")
+    st.caption("RSLAB Chip Spectrum Analyzer · v2.2")
 
 page = st.session_state[PAGE_STATE_KEY]
 render_chip_tools(between=page == "칩 간 데이터 처리")
